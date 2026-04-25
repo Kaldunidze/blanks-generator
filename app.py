@@ -9,6 +9,33 @@ import os
 import sys
 import threading
 
+# ── DPI awareness (must run before ANY GUI call) ──────────────────────────
+def _init_dpi() -> float:
+    """Declare per-monitor DPI awareness and return scale factor (1.0 = 96 dpi)."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            # PROCESS_PER_MONITOR_DPI_AWARE = 2
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            dpi = ctypes.windll.user32.GetDpiForSystem()
+            return dpi / 96.0
+        except Exception:
+            return 1.0
+    # Linux / WSL / macOS: honour env vars set by the compositor
+    for var in ("GDK_SCALE", "QT_SCALE_FACTOR", "XCURSOR_SIZE"):
+        val = os.environ.get(var)
+        if val:
+            try:
+                s = float(val)
+                if 0.5 <= s <= 4.0:
+                    return s
+            except ValueError:
+                pass
+    return 1.0
+
+SCALE: float = _init_dpi()   # e.g. 2.0 on a 4K/200%-scaled display
+
+
 import typst
 from PIL import Image
 import dearpygui.dearpygui as dpg
@@ -18,9 +45,16 @@ SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_PDF  = os.path.join(SCRIPT_DIR, "blanks_output.pdf")
 PREVIEW_PDF = os.path.join(SCRIPT_DIR, "preview_one_team.pdf")
 
-# ── Preview texture (2× display size for HiDPI sharpness) ───────────────────
-TEX_W,  TEX_H  = 760, 1074  # texture pixels (rendered into this)
-PREV_W, PREV_H = 380,  537  # initial display widget size (resizes with window)
+# ── Preview texture ─────────────────────────────────────────────────────────────
+# Texture is rendered at 2× the display widget size for sharpness.
+# PPI is also scaled so typst renders at the true physical resolution.
+_BASE_PPI   = 110                        # base render PPI at scale=1
+PREV_PPI    = _BASE_PPI * max(1, SCALE)  # e.g. 220 on 4K
+_BASE_W, _BASE_H = 380, 537              # display widget at scale=1
+PREV_W = int(_BASE_W * SCALE)
+PREV_H = int(_BASE_H * SCALE)
+TEX_W  = PREV_W * 2                     # texture always 2× display widget
+TEX_H  = PREV_H * 2
 
 # ── Typst shared definitions ───────────────────────────────────────────────────
 # __LANG__ → "true" or "false" (flipped/landscape)
@@ -131,7 +165,7 @@ def _do_preview():
                      v["prev_team"])
         try:
             dpg.set_value("prev_status", "Rendering preview…")
-            png = typst.compile(src, format="png", ppi=150.0, root=SCRIPT_DIR)
+            png = typst.compile(src, format="png", ppi=PREV_PPI, root=SCRIPT_DIR)
             _show_png(png)
             dpg.set_value("prev_status", "")
         except Exception as exc:
@@ -243,7 +277,7 @@ def _find_ui_font() -> str | None:
 
 
 # ── Viewport resize ───────────────────────────────────────────────────────────
-LEFT_W = 410   # left panel pixel width (column + borders + padding)
+LEFT_W = int(410 * SCALE)   # left panel width scales with DPI
 
 
 def on_resize():
@@ -263,11 +297,12 @@ def on_resize():
 def main():
     dpg.create_context()
 
-    # Load a Cyrillic-capable font for the UI
+    # Load a Cyrillic-capable font, sized for the display DPI
     font_path = _find_ui_font()
     if font_path:
+        font_size = max(13, int(15 * SCALE))
         with dpg.font_registry():
-            fnt = dpg.add_font(font_path, 15)
+            fnt = dpg.add_font(font_path, font_size)
         dpg.bind_font(fnt)
 
     # Initial grey texture — replaced by rendered preview asap
@@ -275,7 +310,9 @@ def main():
     with dpg.texture_registry():
         dpg.add_dynamic_texture(TEX_W, TEX_H, blank_data, tag="preview_tex")
 
-    dpg.create_viewport(title="Blanks Generator", width=980, height=700, resizable=True)
+    dpg.create_viewport(title="Blanks Generator",
+                         width=int(980 * SCALE), height=int(700 * SCALE),
+                         resizable=True)
 
     with dpg.window(tag="win", no_title_bar=True, no_resize=True,
                     no_move=True, no_close=True):
