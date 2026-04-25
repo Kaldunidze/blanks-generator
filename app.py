@@ -277,7 +277,7 @@ def _find_ui_font() -> str | None:
 
 
 # ── Viewport resize ───────────────────────────────────────────────────────────
-LEFT_W = int(410 * SCALE)   # left panel width scales with DPI
+LEFT_W = int(500 * SCALE)   # left panel width scales with DPI
 
 
 def on_resize():
@@ -291,6 +291,9 @@ def on_resize():
     else:
         pw = aw;  ph = int(aw * PREV_H / PREV_W)
     dpg.configure_item("preview_img", width=pw, height=ph)
+    # Center the image horizontally in the right panel
+    offset = max(0, (aw - pw) // 2)
+    dpg.configure_item("preview_group", indent=offset)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -358,13 +361,13 @@ def main():
                         dpg.add_slider_int(
                             tag="sl_start", label="from",
                             default_value=1, min_value=1, max_value=300,
-                            width=175, callback=cb_range,
+                            width=int(215 * SCALE), callback=cb_range,
                         )
                         dpg.add_spacer(width=4)
                         dpg.add_slider_int(
                             tag="sl_finish", label="to",
                             default_value=60, min_value=1, max_value=300,
-                            width=175, callback=cb_range,
+                            width=int(215 * SCALE), callback=cb_range,
                         )
 
                     dpg.add_spacer(height=8)
@@ -434,8 +437,9 @@ def main():
                             width=100, callback=schedule_preview,
                             on_enter=True,
                         )
-                    dpg.add_image("preview_tex", tag="preview_img",
-                                  width=PREV_W, height=PREV_H)
+                    with dpg.group(tag="preview_group"):
+                        dpg.add_image("preview_tex", tag="preview_img",
+                                      width=PREV_W, height=PREV_H)
 
     dpg.set_primary_window("win", True)
     dpg.setup_dearpygui()
