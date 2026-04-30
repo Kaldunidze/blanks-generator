@@ -39,10 +39,23 @@ jobs:
           In the app, use paths like: assets/logos/logo.svg
           "@ | Set-Content -Path package/assets/logos/README.txt
 
+      - name: Show package contents
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse package | Select-Object FullName
+
+      - name: Create artifact zip
+        shell: pwsh
+        run: |
+          if (Test-Path app-windows-portable.zip) {
+            Remove-Item app-windows-portable.zip -Force
+          }
+          Compress-Archive -Path package/* -DestinationPath app-windows-portable.zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-windows-portable
-          path: package
+          path: app-windows-portable.zip
           if-no-files-found: error
           retention-days: 14
