@@ -3,12 +3,12 @@
 // Edit these values, or generate via the GUI (app.py).
 
 #let start_team  = 1
-#let finish_team = 60
+#let finish_team = 10
 #let cols        = 4            // blanks per row
 #let rows        = 9            // rows per page  (4×9 = 36 blanks)
 #let landscape   = false        // true = A4 landscape, false = A4 portrait
 #let location    = ""           // event / location label
-#let team_prefix = "Team №"
+#let team_prefix = "Команда №"
 #let font_name   = ""           // leave empty for typst default
 // #let logo     = image("/assets/logo.svg")
 #let logo        = none         // set to image(...) or leave as none

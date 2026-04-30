@@ -42,8 +42,16 @@ import dearpygui.dearpygui as dpg
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_PDF  = os.path.join(SCRIPT_DIR, "blanks_output.pdf")
-PREVIEW_PDF = os.path.join(SCRIPT_DIR, "preview_one_team.pdf")
+
+# For frozen one-file builds, keep user files near the executable.
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    APP_DIR = SCRIPT_DIR
+
+OUTPUT_PDF  = os.path.join(APP_DIR, "blanks_output.pdf")
+PREVIEW_PDF = os.path.join(APP_DIR, "preview_one_team.pdf")
+DEFAULT_LOGO_REL = os.path.join("assets", "logos", "bw_vector_sova.svg")
 
 # ── Preview texture ─────────────────────────────────────────────────────────────
 # Texture is rendered at 2× the display widget size for sharpness.
@@ -104,7 +112,40 @@ PREV_TMPL = "__FONT__\n" + _DEFS + """
 
 
 def _pic_expr(pic: str) -> str:
-    return f'image("{pic.strip()}")' if pic.strip() else "none"
+    raw = pic.strip()
+    if not raw:
+        return "none"
+    # Keep absolute paths intact; normalize relative paths for Typst.
+    if os.path.isabs(raw):
+        norm = os.path.abspath(raw).replace("\\", "/")
+    else:
+        norm = raw.replace("\\", "/")
+        if norm in ("/assets", "assets"):
+            norm = "assets"
+        elif norm.startswith("/assets/"):
+            norm = norm[1:]
+        while norm.startswith("./"):
+            norm = norm[2:]
+    return f'image("{norm}")'
+
+
+def _default_logo_value() -> str:
+    for base in (APP_DIR, SCRIPT_DIR):
+        p = os.path.join(base, DEFAULT_LOGO_REL)
+        if os.path.exists(p):
+            return DEFAULT_LOGO_REL.replace("\\", "/")
+    return ""
+
+
+def _to_input_logo_path(chosen_path: str) -> str:
+    abs_path = os.path.abspath(chosen_path)
+    try:
+        rel = os.path.relpath(abs_path, APP_DIR)
+        if not rel.startswith("..") and not os.path.isabs(rel):
+            return rel.replace("\\", "/")
+    except Exception:
+        pass
+    return abs_path.replace("\\", "/")
 
 
 def _font_line(font: str) -> str:
@@ -166,7 +207,7 @@ def _do_preview():
         try:
             if dpg.does_item_exist("prev_status"):
                 dpg.set_value("prev_status", "Rendering preview…")
-            png = typst.compile(src, format="png", ppi=PREV_PPI, root=SCRIPT_DIR)
+            png = typst.compile(src, format="png", ppi=PREV_PPI, root=APP_DIR)
             _show_png(png)
             if dpg.does_item_exist("prev_status"):
                 dpg.set_value("prev_status", "")
@@ -201,7 +242,7 @@ def _compile_pdf(start, finish, out_path, btn_tag):
 
     def _run():
         try:
-            pdf = typst.compile(src, format="pdf", root=SCRIPT_DIR)
+            pdf = typst.compile(src, format="pdf", root=APP_DIR)
             with open(out_path, "wb") as fh:
                 fh.write(pdf)
             _set_status(f"Done  →  {out_path}", (120, 255, 120))
@@ -258,11 +299,24 @@ def cb_gen(*_):
                  OUTPUT_PDF, "btn_gen")
 
 
+def cb_logo_pick(_sender, app_data, _user_data):
+    chosen = app_data.get("file_path_name", "") if isinstance(app_data, dict) else ""
+    if not chosen:
+        return
+    dpg.set_value("in_pic", _to_input_logo_path(chosen))
+    schedule_preview()
+
+
+def cb_logo_browse(*_):
+    if dpg.does_item_exist("logo_file_dialog"):
+        dpg.show_item("logo_file_dialog")
+
+
 # ── UI font with Cyrillic support ─────────────────────────────────────────────
 def _find_ui_font() -> str | None:
     # Highest priority: user-provided font near project/app.
     # Works for source run and for frozen app when user drops assets near .exe.
-    roots: list[str] = [SCRIPT_DIR]
+    roots: list[str] = [APP_DIR, SCRIPT_DIR]
 
     if getattr(sys, "frozen", False):
         roots.append(os.path.dirname(os.path.abspath(sys.executable)))
@@ -328,6 +382,26 @@ def on_resize():
 def main():
     dpg.create_context()
 
+    logo_start_dir = os.path.join(APP_DIR, "assets", "logos")
+    if not os.path.isdir(logo_start_dir):
+        logo_start_dir = APP_DIR
+
+    with dpg.file_dialog(
+        directory_selector=False,
+        show=False,
+        callback=cb_logo_pick,
+        tag="logo_file_dialog",
+        default_path=logo_start_dir,
+        width=900,
+        height=560,
+        modal=True,
+    ):
+        dpg.add_file_extension(".svg", color=(160, 220, 255, 255), custom_text="[SVG]")
+        dpg.add_file_extension(".png", color=(200, 255, 200, 255), custom_text="[PNG]")
+        dpg.add_file_extension(".jpg", color=(255, 230, 170, 255), custom_text="[JPG]")
+        dpg.add_file_extension(".jpeg", color=(255, 230, 170, 255), custom_text="[JPEG]")
+        dpg.add_file_extension(".*")
+
     # Load a Cyrillic-capable font, sized for the display DPI
     font_path = _find_ui_font()
     font_note = "default"
@@ -380,7 +454,7 @@ def main():
                     dpg.add_input_text(
                         tag="in_pfx", width=-1,
                         on_enter=True, callback=schedule_preview,
-                        default_value="Team №", hint="e.g. Team №",
+                        default_value="Команда №", hint="Команда №, Team , etc. (Enter to update preview)",
                     )
 
                     dpg.add_spacer(height=4)
@@ -402,7 +476,7 @@ def main():
                         dpg.add_spacer(width=4)
                         dpg.add_slider_int(
                             tag="sl_finish", label="to",
-                            default_value=60, min_value=1, max_value=300,
+                            default_value=10, min_value=1, max_value=300,
                             width=int(215 * SCALE), callback=cb_range,
                         )
 
@@ -429,11 +503,18 @@ def main():
                     )
 
                     dpg.add_spacer(height=8)
-                    dpg.add_text("Logo image  (path from project root, or empty)")
+                    dpg.add_text("Logo image  (path from app folder, or empty)")
                     dpg.add_input_text(
                         tag="in_pic", width=-1,
                         on_enter=True, callback=schedule_preview,
-                        default_value="", hint="e.g. /assets/logo.svg  (Enter to update)",
+                        default_value=_default_logo_value(),
+                        hint="e.g. assets/logos/logo.svg  (Enter to update)",
+                    )
+                    dpg.add_spacer(height=4)
+                    dpg.add_button(
+                        label="Browse Logo File...",
+                        width=-1,
+                        callback=cb_logo_browse,
                     )
 
                     dpg.add_spacer(height=10)

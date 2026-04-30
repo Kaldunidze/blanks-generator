@@ -20,10 +20,29 @@ jobs:
         shell: cmd
         run: build-windows.bat
 
+      - name: Prepare portable package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/assets/logos | Out-Null
+          Copy-Item dist/app.exe package/app.exe -Force
+
+          if (Test-Path "assets/font.ttf") {
+            Copy-Item assets/font.ttf package/assets/font.ttf -Force
+          }
+
+          if (Test-Path "assets/logos") {
+            Copy-Item assets/logos/* package/assets/logos/ -Recurse -Force
+          }
+
+          @"
+          Put your logo files in this folder.
+          In the app, use paths like: assets/logos/logo.svg
+          "@ | Set-Content -Path package/assets/logos/README.txt
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-windows
-          path: dist/app.exe
+          name: app-windows-portable
+          path: package
           if-no-files-found: error
           retention-days: 14
