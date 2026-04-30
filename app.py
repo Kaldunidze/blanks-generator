@@ -33,7 +33,7 @@ def _init_dpi() -> float:
                 pass
     return 1.0
 
-SCALE: float = _init_dpi()   # e.g. 2.0 on a 4K/200%-scaled display
+SCALE: float = 1.75
 
 
 import typst
@@ -164,12 +164,15 @@ def _do_preview():
                      v["loc"], v["pfx"], v["pic"], v["font"], v["land"],
                      v["prev_team"])
         try:
-            dpg.set_value("prev_status", "Rendering preview…")
+            if dpg.does_item_exist("prev_status"):
+                dpg.set_value("prev_status", "Rendering preview…")
             png = typst.compile(src, format="png", ppi=PREV_PPI, root=SCRIPT_DIR)
             _show_png(png)
-            dpg.set_value("prev_status", "")
+            if dpg.does_item_exist("prev_status"):
+                dpg.set_value("prev_status", "")
         except Exception as exc:
-            dpg.set_value("prev_status", f"Preview error: {str(exc)[:150]}")
+            if dpg.does_item_exist("prev_status"):
+                dpg.set_value("prev_status", f"Preview error: {str(exc)[:150]}")
 
 
 def _show_png(png_bytes: bytes):
@@ -187,21 +190,24 @@ def _compile_pdf(start, finish, out_path, btn_tag):
     src = _build(FULL_TMPL, start, finish, v["w"], v["h"],
                  v["loc"], v["pfx"], v["pic"], v["font"], v["land"])
 
+    def _set_status(text: str, color: tuple[int, int, int] | None = None):
+        if dpg.does_item_exist("status"):
+            if color is not None:
+                dpg.configure_item("status", color=color)
+            dpg.set_value("status", text)
+
     dpg.configure_item(btn_tag, enabled=False)
-    dpg.configure_item("status", color=(220, 200, 80))
-    dpg.set_value("status", "Compiling…")
+    _set_status("Compiling…", (220, 200, 80))
 
     def _run():
         try:
             pdf = typst.compile(src, format="pdf", root=SCRIPT_DIR)
             with open(out_path, "wb") as fh:
                 fh.write(pdf)
-            dpg.configure_item("status", color=(120, 255, 120))
-            dpg.set_value("status", f"Done  →  {out_path}")
+            _set_status(f"Done  →  {out_path}", (120, 255, 120))
             _open_file(out_path)
         except Exception as exc:
-            dpg.configure_item("status", color=(255, 100, 100))
-            dpg.set_value("status", f"Error: {str(exc)[:250]}")
+            _set_status(f"Error: {str(exc)[:250]}", (255, 100, 100))
         finally:
             dpg.configure_item(btn_tag, enabled=True)
 
@@ -226,9 +232,10 @@ def _update_stats(*_):
     w = dpg.get_value("sl_w");  h = dpg.get_value("sl_h")
     s = dpg.get_value("sl_start"); f = dpg.get_value("sl_finish")
     teams = max(0, f - s + 1)
-    dpg.set_value("stats",
-        f"{w}×{h}  •  {w*h} blanks/page  •  {w*h} questions/team  •  "
-        f"{teams} teams  •  {teams} pages total")
+    if dpg.does_item_exist("stats"):
+        dpg.set_value("stats",
+            f"{w}×{h}  •  {w*h} blanks/page  •  {w*h} questions/team  •  "
+            f"{teams} teams  •  {teams} pages total")
 
 
 # ── Callbacks ─────────────────────────────────────────────────────────────────
@@ -253,21 +260,42 @@ def cb_gen(*_):
 
 # ── UI font with Cyrillic support ─────────────────────────────────────────────
 def _find_ui_font() -> str | None:
-    # Check for font bundled alongside exe (PyInstaller: assets/font.ttf)
-    base = getattr(sys, "_MEIPASS", SCRIPT_DIR)
-    bundled = os.path.join(base, "assets", "font.ttf")
-    if os.path.exists(bundled):
-        return bundled
+    # Highest priority: user-provided font near project/app.
+    # Works for source run and for frozen app when user drops assets near .exe.
+    roots: list[str] = [SCRIPT_DIR]
+
+    if getattr(sys, "frozen", False):
+        roots.append(os.path.dirname(os.path.abspath(sys.executable)))
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(meipass)
+
+    for root in roots:
+        for rel in (
+            os.path.join("assets", "font.ttf"),
+            os.path.join("assets", "DejaVuSans.ttf"),
+            os.path.join("assets", "NotoSans-Regular.ttf"),
+        ):
+            p = os.path.join(root, rel)
+            if os.path.exists(p):
+                return p
 
     windir = os.environ.get("WINDIR", r"C:\Windows")
     for p in [
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        os.path.join(windir, "Fonts", "arialuni.ttf"),
         os.path.join(windir, "Fonts", "arial.ttf"),
         os.path.join(windir, "Fonts", "calibri.ttf"),
         os.path.join(windir, "Fonts", "segoeui.ttf"),
+        os.path.join(windir, "Fonts", "tahoma.ttf"),
         "/Library/Fonts/Arial.ttf",
         "/System/Library/Fonts/Supplemental/Arial.ttf",
     ]:
@@ -302,11 +330,23 @@ def main():
 
     # Load a Cyrillic-capable font, sized for the display DPI
     font_path = _find_ui_font()
+    font_note = "default"
     if font_path:
         font_size = max(13, int(15 * SCALE))
         with dpg.font_registry():
-            fnt = dpg.add_font(font_path, font_size)
+            # DearPyGui defaults to a limited glyph range; add Cyrillic explicitly.
+            with dpg.font(font_path, font_size) as fnt:
+                dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
+                dpg.add_font_range_hint(dpg.mvFontRangeHint_Cyrillic)
+                # Include Cyrillic blocks explicitly for Dear ImGui builds
+                # where range hints are not enough.
+                dpg.add_font_range(0x0020, 0x00FF)  # basic latin + latin-1
+                dpg.add_font_range(0x0400, 0x052F)  # Cyrillic + Cyrillic Supplement
+                dpg.add_font_range(0x2DE0, 0x2DFF)  # Cyrillic Extended-A
+                dpg.add_font_range(0xA640, 0xA69F)  # Cyrillic Extended-B
+                dpg.add_font_range(0x2116, 0x2116)  # Numero sign
         dpg.bind_font(fnt)
+        font_note = os.path.basename(font_path)
 
     # Initial grey texture — replaced by rendered preview asap
     blank_data = [0.82, 0.82, 0.82, 1.0] * (TEX_W * TEX_H)
@@ -328,10 +368,6 @@ def main():
 
                 # ── Left: settings ────────────────────────────────────────────
                 with dpg.table_cell():
-                    dpg.add_text("Settings", color=(180, 210, 255))
-                    dpg.add_separator()
-                    dpg.add_spacer(height=6)
-
                     dpg.add_text("Event / Location")
                     dpg.add_input_text(
                         tag="in_loc", width=-1,
@@ -406,28 +442,16 @@ def main():
 
                     dpg.add_button(
                         tag="btn_prev", label="Save Preview PDF  (1 team)",
-                        width=-1, height=28, callback=cb_prev_pdf,
+                        width=-1, height=42, callback=cb_prev_pdf,
                     )
                     dpg.add_spacer(height=4)
                     dpg.add_button(
                         tag="btn_gen", label="Generate PDF  —  all teams",
-                        width=-1, height=28, callback=cb_gen,
+                        width=-1, height=42, callback=cb_gen,
                     )
-                    dpg.add_spacer(height=6)
-                    dpg.add_text(tag="status", default_value="Ready.",
-                                 color=(160, 200, 160))
-                    dpg.add_spacer(height=4)
-                    dpg.add_text(tag="stats", default_value="",
-                                 color=(160, 185, 230))
 
                 # ── Right: live rendered preview ───────────────────────────────
                 with dpg.table_cell():
-                    dpg.add_text(
-                        "Live Preview  (typst-rendered, updates 0.7 s after change)",
-                        color=(180, 210, 255),
-                    )
-                    dpg.add_text(tag="prev_status", default_value="",
-                                 color=(220, 200, 80))
                     with dpg.group(horizontal=True):
                         dpg.add_text("Preview team \u2116")
                         dpg.add_input_int(
@@ -446,6 +470,11 @@ def main():
     dpg.show_viewport()
     dpg.set_viewport_resize_callback(on_resize)
     dpg.configure_app(wait_for_input=True)
+    if dpg.does_item_exist("status"):
+        dpg.set_value(
+            "status",
+            f"Ready. UI font: {font_note} | scale: {SCALE:.2f}",
+        )
     _update_stats()
     schedule_preview()      # kick off initial render
     dpg.start_dearpygui()

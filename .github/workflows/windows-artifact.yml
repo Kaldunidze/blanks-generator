@@ -1,0 +1,29 @@
+name: Build Windows Artifact
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Windows executable
+        shell: cmd
+        run: build-windows.bat
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-windows
+          path: dist/app.exe
+          if-no-files-found: error
+          retention-days: 14
